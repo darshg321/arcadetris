@@ -11,7 +11,6 @@ const int p1x = 27, p1y = 26, p1s1 = 28, p1s2 = 22;
 const int p2x = 15, p2y = 16, p2s1 = 17, p2s2 = 18;
 
 // ───────── Joystick tuning ─────────
-// ─── Calibrated 8-bit units ─────────────────────────────────────
 const int JOY_CENTER_X  = 3176 >> 5;   // ≈ 199
 const int JOY_CENTER_Y  = 3133 >> 5;   // ≈ 196
 const int JOY_DEADZONE_X = 12;         // 12 × 16 = 192 raw counts  ≈ 4.7 %
@@ -28,12 +27,11 @@ Adafruit_Protomatter matrix(
   PANEL_W, 1, 1, rgbPins, 4, addrPins,
   clockPin, latchPin, oePin, false);
 
-// ───────── Game parameters ─────────
 #define BOARD_W 10
 #define BOARD_H 20
-#define P1_OX   2    // x-origin of player 1 board
-#define P2_OX   34   // x-origin of player 2 board
-#define OY      8    // y-origin shared by both boards
+#define P1_OX   2
+#define P2_OX   34
+#define OY      8
 
 // ───────── Tetromino shapes (7 pcs × 4 rots × 4 blocks) ─────────
 const int8_t blockData[7][4][4][2] PROGMEM = {
@@ -62,7 +60,8 @@ struct GameState {
   uint32_t score;
   uint16_t lines;
   uint32_t lastDrop;
-  uint8_t  ox;               // screen offset X for this board
+  uint8_t  ox;
+  bool     gameOver = false;
 };
 
 struct JoyState {
@@ -72,8 +71,7 @@ struct JoyState {
   uint32_t lastRepeat = 0;
 };
 
-// ─────────--- Globals ---─────────
-GameState p1, p2;            // two independent players
+GameState p1, p2;
 JoyState  joys1{p1x, p1y, p1s1, p1s2}, joys2{p2x, p2y, p2s1, p2s2};
 
 // ─────────--- Color helpers ---─────────
@@ -122,16 +120,21 @@ void lockPiece(GameState& g){
   g.score+=10;                                    // placement bonus
 }
 
-void gameOver(GameState& g){
-  for(uint8_t i=0;i<3;i++){
+void gameOver(GameState& g, int winner){
+  g.gameOver = true;
+  for(uint8_t i=0; i<3; i++){
     matrix.fillScreen(0);
     matrix.setTextColor(white());
-    matrix.setCursor(g.ox+1,12);
-    matrix.print("GAME");
-    matrix.setCursor(g.ox+1,20);
-    matrix.print("OVER");
-    matrix.show(); delay(500);
-    matrix.fillScreen(pieceColor(random(7))); matrix.show(); delay(200);
+    matrix.setCursor(10, 10);
+    matrix.print("PLAYER");
+    matrix.setCursor(22, 18);
+    matrix.print(winner);
+    matrix.setCursor(8, 26);
+    matrix.print("WINS!");
+    matrix.show(); delay(600);
+
+    matrix.fillScreen(pieceColor(random(7)));
+    matrix.show(); delay(300);
   }
 }
 
@@ -139,10 +142,8 @@ void newPiece(GameState& g){
   g.cur = g.nxt;
   g.cur.x = (BOARD_W/2)-2;
   g.cur.y = 0;
-  if(collides(g,g.cur.x,g.cur.y,g.cur.rot)){      // top-out
-    gameOver(g);
-    memset(g.board,-1,sizeof(g.board));
-    g.score=g.lines=0;
+  if(collides(g,g.cur.x,g.cur.y,g.cur.rot)){
+    g.gameOver = true;
   }
   g.nxt.type = random(7);
   g.nxt.rot  = 0;
@@ -298,28 +299,59 @@ void initPlayer(GameState& g,uint8_t offsetX){
   g.ox = offsetX;
   g.score=g.lines=0;
   g.lastDrop = millis();
+  g.gameOver = false;
   g.nxt.type = random(7); g.nxt.rot = 0;
   newPiece(g);
 }
 
+void waitForStart(){
+  matrix.fillScreen(0);
+  matrix.setTextColor(white());
+  matrix.setCursor(6, 10);
+  matrix.print("PRESS");
+  matrix.setCursor(2, 18);
+  matrix.print("ANY BUTTON");
+  matrix.setCursor(10, 26);
+  matrix.print("TO START");
+  matrix.show();
+
+  while(true){
+    if(!digitalRead(p1s1) || !digitalRead(p1s2) ||
+       !digitalRead(p2s1) || !digitalRead(p2s2)){
+      delay(200); // debounce
+      break;
+    }
+  }
+}
+
 void setup(){
   Serial.begin(115200); while(!Serial);
-  analogReadResolution(12);        // 0-4095
+  analogReadResolution(12);
   pinMode(p1s1, INPUT_PULLUP); pinMode(p1s2, INPUT_PULLUP);
   pinMode(p2s1, INPUT_PULLUP); pinMode(p2s2, INPUT_PULLUP);
   if(matrix.begin()!=PROTOMATTER_OK) while(1);
-  matrix.setTextSize(1);               // smallest font
-  initPlayer(p1,P1_OX); initPlayer(p2,P2_OX);
+  matrix.setTextSize(1);
+  waitForStart();
+  initPlayer(p1,P1_OX);
+  initPlayer(p2,P2_OX);
 }
 
 void loop(){
-  // ── serial input ──
-  while(Serial.available()) handleInput(Serial.read());
-
-  // ── gravity for each player ──
   uint32_t now=millis();
+  if(p1.gameOver || p2.gameOver){
+    int winner = p1.gameOver ? 2 : 1;
+    gameOver(p1, winner);
+    gameOver(p2, winner);
+    waitForStart();
+    initPlayer(p1,P1_OX);
+    initPlayer(p2,P2_OX);
+    return;
+  }
+
+  while(Serial.available()) handleInput(Serial.read());
   pollJoystick(joys1, p1, now);
   pollJoystick(joys2, p2, now);
+
   if(now-p1.lastDrop>DROP_MS){
     p1.lastDrop=now;
     if(!collides(p1,p1.cur.x,p1.cur.y+1,p1.cur.rot)) p1.cur.y++;
