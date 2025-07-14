@@ -6,6 +6,23 @@
 uint8_t rgbPins[]  = {2, 10, 3, 4, 11, 5};     // R1 G1 B1 R2 G2 B2
 uint8_t addrPins[] = {6, 12, 7, 13};           // A  B  C  D
 const int clockPin = 8, latchPin = 14, oePin = 9;
+// raccoon is p1s1
+const int p1x = 27, p1y = 26, p1s1 = 28, p1s2 = 22;
+const int p2x = 15, p2y = 16, p2s1 = 17, p2s2 = 18;
+
+// ───────── Joystick tuning ─────────
+// ─── Calibrated 8-bit units ─────────────────────────────────────
+const int JOY_CENTER_X  = 3176 >> 5;   // ≈ 199
+const int JOY_CENTER_Y  = 3133 >> 5;   // ≈ 196
+const int JOY_DEADZONE_X = 12;         // 12 × 16 = 192 raw counts  ≈ 4.7 %
+const int JOY_DEADZONE_Y = 18;         // a little wider on Y
+const uint32_t JOY_REPEAT_MS  = 150;   // Left/right repeat
+const uint32_t DROP_MS        = 500;   // Normal gravity
+const uint32_t FAST_DROP_MS   = 50;    // While Y-axis held down
+
+struct GameState;
+void rotate(GameState& g, int dir);
+void handleInput(int c);
 
 Adafruit_Protomatter matrix(
   PANEL_W, 1, 1, rgbPins, 4, addrPins,
@@ -17,7 +34,6 @@ Adafruit_Protomatter matrix(
 #define P1_OX   2    // x-origin of player 1 board
 #define P2_OX   34   // x-origin of player 2 board
 #define OY      8    // y-origin shared by both boards
-const uint32_t DROP_MS = 500;   // gravity interval
 
 // ───────── Tetromino shapes (7 pcs × 4 rots × 4 blocks) ─────────
 const int8_t blockData[7][4][4][2] PROGMEM = {
@@ -49,8 +65,16 @@ struct GameState {
   uint8_t  ox;               // screen offset X for this board
 };
 
+struct JoyState {
+  uint8_t xPin, yPin, b1Pin, b2Pin;
+  int8_t  prevXDir = 0;
+  bool    prevB1   = false, prevB2 = false;
+  uint32_t lastRepeat = 0;
+};
+
 // ─────────--- Globals ---─────────
 GameState p1, p2;            // two independent players
+JoyState  joys1{p1x, p1y, p1s1, p1s2}, joys2{p2x, p2y, p2s1, p2s2};
 
 // ─────────--- Color helpers ---─────────
 uint16_t pieceColor(uint8_t t) {
@@ -124,13 +148,88 @@ void newPiece(GameState& g){
   g.nxt.rot  = 0;
 }
 
-void rotate(GameState& g,int dir){
-  int nr=(g.cur.rot+dir+4)%4;
-  if(!collides(g,g.cur.x,g.cur.y,nr)) g.cur.rot=nr;
+void rotate(GameState& g, int dir)
+{
+  uint8_t newRot = (g.cur.rot + (dir > 0 ? 1 : 3)) & 3;   // 0-3
+  static const int8_t kicks[5][2] = {
+    { 0, 0}, {-1, 0}, { 1, 0}, { 0,-1}, { 0, 1}
+  };
+  for (uint8_t k = 0; k < 5; k++) {
+    int nx = g.cur.x + kicks[k][0];
+    int ny = g.cur.y + kicks[k][1];
+    if (!collides(g, nx, ny, newRot)) {        // found a valid kick
+      g.cur.x = nx; g.cur.y = ny; g.cur.rot = newRot;
+      return;
+    }
+  }
 }
 
-void hardDrop(GameState& g){ while(!collides(g,g.cur.x,g.cur.y+1,g.cur.rot)) g.cur.y++;
-  lockPiece(g); newPiece(g); }
+void pollJoystick(JoyState& js, GameState& g, uint32_t now)
+{
+// ─── Read & scale ───────────────────────────────────────────────
+int rawX = analogRead(js.xPin);
+int rawY = analogRead(js.yPin);
+
+int xVal = rawX >> 5;        // 0-255   (= rawX / 16)
+int yVal = rawY >> 5;        // 0-255
+
+int8_t xDir = 0;
+if      (xVal < JOY_CENTER_X - JOY_DEADZONE_X) xDir = -1;
+else if (xVal > JOY_CENTER_X + JOY_DEADZONE_X) xDir = +1;
+
+int8_t yDir = 0;
+if      (yVal < JOY_CENTER_Y - JOY_DEADZONE_Y) yDir = -1;
+else if (yVal > JOY_CENTER_Y + JOY_DEADZONE_Y) yDir = +1;
+
+  if (xDir && (xDir != js.prevXDir || now - js.lastRepeat > JOY_REPEAT_MS)) {
+    if (!collides(g, g.cur.x + xDir, g.cur.y, g.cur.rot)) g.cur.x += xDir;
+    js.lastRepeat = now;
+  }
+  js.prevXDir = xDir;
+
+  Serial.print("X="); Serial.print(xVal);
+  Serial.print(" Y="); Serial.println(yVal);
+
+  // ---------- Soft-drop ----------
+  bool isDown = (yDir == +1);
+  uint32_t dropInterval = isDown ? FAST_DROP_MS : DROP_MS;
+  if (now - g.lastDrop >= dropInterval) {
+    g.lastDrop = now;
+    if (!collides(g, g.cur.x, g.cur.y + 1, g.cur.rot)) g.cur.y++;
+    else { lockPiece(g); newPiece(g); }
+  }
+
+  // ---------- Buttons (rotate) ----------
+  bool b1 = !digitalRead(js.b1Pin);  // LOW = pressed (INPUT_PULLUP)
+  bool b2 = !digitalRead(js.b2Pin);
+
+  if (b1 && !js.prevB1) rotate(g, +1);   // CW
+  if (b2 && !js.prevB2) rotate(g, -1);   // CCW
+
+  js.prevB1 = b1;
+  js.prevB2 = b2;
+}
+
+void handleInput(int c)
+{
+  switch (c) {
+    // ── Player 1  (a d s r z) ──
+    case 'a': if(!collides(p1,p1.cur.x-1,p1.cur.y,p1.cur.rot)) p1.cur.x--; break;
+    case 'd': if(!collides(p1,p1.cur.x+1,p1.cur.y,p1.cur.rot)) p1.cur.x++; break;
+    case 's': while(!collides(p1,p1.cur.x,p1.cur.y+1,p1.cur.rot)) p1.cur.y++;
+              lockPiece(p1); newPiece(p1); break;
+    case 'r': rotate(p1, +1); break;
+    case 'z': rotate(p1, -1); break;
+
+    // ── Player 2  (j l k x c) ──
+    case 'j': if(!collides(p2,p2.cur.x-1,p2.cur.y,p2.cur.rot)) p2.cur.x--; break;
+    case 'l': if(!collides(p2,p2.cur.x+1,p2.cur.y,p2.cur.rot)) p2.cur.x++; break;
+    case 'k': while(!collides(p2,p2.cur.x,p2.cur.y+1,p2.cur.rot)) p2.cur.y++;
+              lockPiece(p2); newPiece(p2); break;
+    case 'x': rotate(p2, +1); break;
+    case 'c': rotate(p2, -1); break;
+  }
+}
 
 // ─────────--- Drawing ---─────────
 void drawPiece(const GameState& g,const Piece& p){
@@ -205,24 +304,12 @@ void initPlayer(GameState& g,uint8_t offsetX){
 
 void setup(){
   Serial.begin(115200); while(!Serial);
+  analogReadResolution(12);        // 0-4095
+  pinMode(p1s1, INPUT_PULLUP); pinMode(p1s2, INPUT_PULLUP);
+  pinMode(p2s1, INPUT_PULLUP); pinMode(p2s2, INPUT_PULLUP);
   if(matrix.begin()!=PROTOMATTER_OK) while(1);
   matrix.setTextSize(1);               // smallest font
   initPlayer(p1,P1_OX); initPlayer(p2,P2_OX);
-}
-
-void handleInput(char c){
-  // Player 1
-  if     (c=='a' && !collides(p1,p1.cur.x-1,p1.cur.y,p1.cur.rot)) p1.cur.x--;
-  else if(c=='d' && !collides(p1,p1.cur.x+1,p1.cur.y,p1.cur.rot)) p1.cur.x++;
-  else if(c=='s') hardDrop(p1);
-  else if(c=='r'||c=='x') rotate(p1,1);
-  else if(c=='z') rotate(p1,-1);
-  // Player 2
-  else if(c=='j' && !collides(p2,p2.cur.x-1,p2.cur.y,p2.cur.rot)) p2.cur.x--;
-  else if(c=='l' && !collides(p2,p2.cur.x+1,p2.cur.y,p2.cur.rot)) p2.cur.x++;
-  else if(c=='k') hardDrop(p2);
-  else if(c=='n') rotate(p2,1);
-  else if(c=='m') rotate(p2,-1);
 }
 
 void loop(){
@@ -231,6 +318,8 @@ void loop(){
 
   // ── gravity for each player ──
   uint32_t now=millis();
+  pollJoystick(joys1, p1, now);
+  pollJoystick(joys2, p2, now);
   if(now-p1.lastDrop>DROP_MS){
     p1.lastDrop=now;
     if(!collides(p1,p1.cur.x,p1.cur.y+1,p1.cur.rot)) p1.cur.y++;
