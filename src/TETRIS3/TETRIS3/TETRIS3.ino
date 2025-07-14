@@ -55,14 +55,14 @@ GameState p1, p2;            // two independent players
 // ─────────--- Color helpers ---─────────
 uint16_t pieceColor(uint8_t t) {
   switch (t) {
-    case 0: return matrix.color565(0  ,255,255); // I
-    case 1: return matrix.color565(0  ,0  ,255); // J
-    case 2: return matrix.color565(255,165,0  ); // L
-    case 3: return matrix.color565(255,255,0  ); // O
-    case 4: return matrix.color565(0  ,255,0  ); // S
-    case 5: return matrix.color565(160,0  ,240); // T
-    case 6: return matrix.color565(255,0  ,0  ); // Z
-    default:return matrix.color565(255,255,255);
+    case 0: return matrix.color565(84,198,157); // I
+    case 1: return matrix.color565(187,108,61); // J
+    case 2: return matrix.color565(89,72,171); // L
+    case 3: return matrix.color565(187,164,60); // O
+    case 4: return matrix.color565(141,189,61); // S
+    case 5: return matrix.color565(175,74,165); // T
+    case 6: return matrix.color565(194,68,75); // Z
+    default:return matrix.color565(95,96,100);
   }
 }
 inline uint16_t white() { return matrix.color565(255,255,255); }
