@@ -50,7 +50,7 @@ Note: this does work, however pretty much impossible to get a video, if you take
 * ![screen](./images/working.jpeg)
 
 Star menu:
-* ![Screenshot_20250714_074418_Photos2](https://github.com/user-attachments/assets/538db87e-9bb9-4411-b27c-74ce031fe690)
+![20250714_050718](https://github.com/user-attachments/assets/5b415f23-345b-4fd1-97a2-3a29e4897af6)
 
 Game in play:
 * <img width="1080" height="600" alt="image" src="https://github.com/user-attachments/assets/c40e6ec5-4b0b-41e1-881a-fba4a8f5ad39" />
