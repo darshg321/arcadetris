@@ -49,7 +49,7 @@ More peak posture
 Note: this does work, however pretty much impossible to get a video, if you take too long to take a picture you might get a seizure
 * ![screen](./images/working.jpeg)
 
-Star menu:
+Start menu:
 ![20250714_050718](https://github.com/user-attachments/assets/5b415f23-345b-4fd1-97a2-3a29e4897af6)
 
 Game in play:
