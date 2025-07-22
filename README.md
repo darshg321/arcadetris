@@ -64,6 +64,6 @@ Game in play:
 * Heavy on the seizure warning, this is cooked. 
 
 ## Demo 
-![video](https://youtube.com/shorts/YQOdSCr6gd4?feature=share)
+https://youtube.com/shorts/YQOdSCr6gd4?feature=share
 
 
